@@ -13,6 +13,7 @@ pipeline {
                 }
             }
             steps {
+                echo "======== Scan Secret Scanning ========"
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh 'trufflehog filesystem . --exclude-paths trufflehog-excluded-paths.txt --fail > trufflehog-scan-result.txt'
                 }
@@ -20,6 +21,7 @@ pipeline {
                 archiveArtifacts artifacts: 'trufflehog-scan-result.txt'
             }
         }
+
         stage('Build') {
             agent {
               docker {
@@ -27,9 +29,11 @@ pipeline {
               }
             }
             steps {
+                echo "======== Build ========"
                 sh 'npm install'
             }
         }
+
         stage('Test') {
             agent {
               docker {
@@ -37,9 +41,14 @@ pipeline {
               }
             }
             steps {
+                echo "======== Test ========"
                 sh 'echo test'
             }
         }
+
+        
+        stage('Docker SCA Test') {
+        parallel{ 
         stage('SCA Snyk Test') {
             agent {
               docker {
@@ -48,6 +57,7 @@ pipeline {
               }
             }
             steps {
+                echo "======== SCA using Snyk ========"
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh 'snyk test > snyk-scan-report.txt'
                 }
@@ -62,6 +72,7 @@ pipeline {
               }
             }
             steps {
+                echo "======== SCA using Retire JS ========"
                 sh 'npm install retire'
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh './node_modules/retire/lib/cli.js --outputpath retire-scan-report.txt'
@@ -78,6 +89,7 @@ pipeline {
               }
             }
             steps {
+                echo "======== SCA using OWASP Dependency ========"
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '/usr/share/dependency-check/bin/dependency-check.sh --scan . --project "NodeJS Goof" --format ALL'
                 }
@@ -86,21 +98,25 @@ pipeline {
                 archiveArtifacts artifacts: 'dependency-check-report.xml'
             }
         }
-        stage('SCA Trivy Scan Dockerfile Misconfiguration') {
+        
+        }
+        }
+
+        stage('SAST SonarQube') {
             agent {
-              docker {
-                  image 'aquasec/trivy:latest'
-                  args '-u root --network host --entrypoint='
-              }
+                docker {
+                    image 'sonarsource/sonar-scanner-cli:latest'
+                    args '--network host -v ".:/usr/src" --entrypoint='
+                }
             }
             steps {
+                echo "======== SAST Sonarqube ========"
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh 'trivy config Dockerfile --exit-code=1 > trivy-scan-dockerfile-report.txt'
+                    sh 'sonar-scanner -Dsonar.projectKey=NodeGoat -Dsonar.qualitygate.wait=true -Dsonar.sources=. -Dsonar.host.url=http://192.168.240.1:9000 -Dsonar.token=sqp_6f2cb4ad43882fbc30155ba4c7b51f691b70e3af' 
+                    }
                 }
-                sh 'cat trivy-scan-dockerfile-report.txt'
-                archiveArtifacts artifacts: 'trivy-scan-dockerfile-report.txt'
             }
-        }
+
         stage('Build Docker Image') {
             agent {
                 docker {
@@ -112,6 +128,9 @@ pipeline {
                 sh 'docker build -t alifadi/nodejsgoof:0.1 .'
             }
         }
+
+        stage('Docker SCA Test') {
+        parallel{ 
         stage('SCA Snyk Scan Docker Image') {
             agent {
               docker {
@@ -120,6 +139,7 @@ pipeline {
               }
             }
             steps {
+                echo "======== Docker SCA using Snyk ========"
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh 'snyk container test alifadi/nodejsgoof:0.1 --exclude-app-vulns > snyk-scan-docker-image-report.txt'
                 }
@@ -127,6 +147,25 @@ pipeline {
                 archiveArtifacts artifacts: 'snyk-scan-docker-image-report.txt'
             }
         }
+        stage('SCA Trivy Scan Dockerfile Misconfiguration') {
+            agent {
+              docker {
+                  image 'aquasec/trivy:latest'
+                  args '-u root --network host --entrypoint='
+              }
+            }
+            steps {
+                echo "======== Docker SCA using Trivy ========"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh 'trivy config Dockerfile --exit-code=1 > trivy-scan-dockerfile-report.txt'
+                }
+                sh 'cat trivy-scan-dockerfile-report.txt'
+                archiveArtifacts artifacts: 'trivy-scan-dockerfile-report.txt'
+            }
+            }
+        }
+        }
+
         stage('Push Image to Docker Registry') {
             agent {
                 docker {
@@ -139,6 +178,7 @@ pipeline {
                 sh 'docker push alifadi/nodejsgoof:0.1'
             }
         }
+        
         stage('Deploy Docker Image') {
             agent {
                 docker {
